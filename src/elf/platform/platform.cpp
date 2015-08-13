@@ -176,7 +176,7 @@ static void platform_on_auth(const plat_base_req *req)
 }
 
 int platform_auth(const char *token, auth_cb cb, void *args) {
-    LOG_DEBUG("net", "platform_i4_auth: %p", args);
+    LOG_DEBUG("net", "token: %s, platform_auth: %p", token, args);
 
     cJSON *setting = platform_get_json();
     if (setting == NULL) {
@@ -190,14 +190,14 @@ int platform_auth(const char *token, auth_cb cb, void *args) {
 
     std::string post_url;
     post_url.append(url->valuestring);
-    post_url.append("/");
-    post_url.append(token);
+
+    std::string params;
+    params.append("token=");
+    params.append(token);
 
     // do post request
     plat_json_req *json_req = E_NEW plat_json_req(cb, args);
-    json_req->plat_type = PLAT_I4;
-
-    http_json(post_url.c_str(), "", write_callback, json_req);
+    http_json(post_url.c_str(), params.c_str(), write_callback, json_req);
 
     LOG_DEBUG("net", "auth url: %s", url->valuestring);
     return PLATFORM_OK;

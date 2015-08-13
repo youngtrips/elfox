@@ -26,9 +26,10 @@ static void *http_post(void *args)
     if (curl != NULL) {
         struct curl_slist *slist = NULL;
 
-        slist = curl_slist_append(slist, "Content-type:application/json;charset=utf-8");
+        //slist = curl_slist_append(slist, "Content-type:application/json;charset=utf-8");
+        slist = curl_slist_append(slist, "Content-type:application/x-www-form-urlencoded");
 
-        //LOG_DEBUG("http", "prepare do post: url[%s], json[%s]", post->url.c_str(), post->json.c_str());
+        LOG_DEBUG("http", "prepare do post: url[%s], json[%s]", post->url.c_str(), post->json.c_str());
         //curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
         //curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 1L);
         curl_easy_setopt(curl, CURLOPT_URL, post->url.c_str());

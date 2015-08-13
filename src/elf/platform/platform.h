@@ -40,7 +40,7 @@ enum platform_error {
 
 int platform_init();
 int platform_fini();
-int platform_load(int type, const char *proto);
+int platform_load(const char *proto);
 int platform_auth(const char *token, auth_cb cb, void *args); 
 int platform_proc();
 
