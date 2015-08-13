@@ -18,8 +18,9 @@
 
 namespace elf {
 
-typedef int (*auth_cb)(int plat_type, int code, cJSON *resp, void *args);
 
+typedef int (*auth_cb)(int code, std::string userdi, std::string username,
+                        std::string channel, std::string token, void *args);
 enum platform_type {
     PLAT_INVALID    = -1,
     PLAT_PP         = 1,
@@ -40,9 +41,8 @@ enum platform_error {
 int platform_init();
 int platform_fini();
 int platform_load(int type, const char *proto);
-int platform_auth(int plat_type, const char *data, auth_cb cb, void *args);
+int platform_auth(const char *token, auth_cb cb, void *args); 
 int platform_proc();
-
 
 } // namespace elf
 

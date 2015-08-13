@@ -38,20 +38,13 @@ struct plat_base_req {
 };
 
 struct plat_base_resp {
-    int plat_type;
-    int type;
     int code;
+    std::string  username;
+    std::string userid;
+    std::string channel;
+    std::string token;
     auth_cb cb;
-    cJSON *resp;
     void *args;
-
-    plat_base_resp()
-    : plat_type(0)
-    , type(0)
-    , code(0)
-    , cb(NULL)
-    , resp(NULL)
-    , args(NULL) {}
 };
 
 struct plat_json_req : public plat_base_req {
@@ -69,27 +62,25 @@ struct plat_json_req : public plat_base_req {
     }
 };
 
-static std::map<int, cJSON*> s_jsons;
+static cJSON* s_json;
 static xqueue<plat_base_resp*> s_resps;
-static void platform_pp_on_auth(const plat_base_req *req);
-static void platform_i4_on_auth(const plat_base_req *req);
+static void platform_on_auth(const plat_base_req *req);
 
 int platform_init()
 {
-    s_jsons.clear();
+    s_json = NULL;
     return 0;
 }
 
 int platform_fini()
 {
-    std::map<int, cJSON*>::iterator itr;
-    for (itr = s_jsons.begin();itr != s_jsons.end(); ++itr) {
-        cJSON_Delete(itr->second);
+    if (s_json != NULL) {
+        cJSON_Delete(s_json);
     }
     return 0;
 }
 
-int platform_load(int type, const char *proto)
+int platform_load(const char *proto)
 {
     assert(proto);
 
@@ -104,23 +95,18 @@ int platform_load(int type, const char *proto)
     std::stringstream iss;
 
     iss << fs.rdbuf();
-    cJSON *json = cJSON_Parse(iss.str().c_str());
-    if (json == NULL) {
+    s_json = cJSON_Parse(iss.str().c_str());
+    if (s_json == NULL) {
         LOG_ERROR("json",
                 "Can NOT parse json file %s.", proto);
         return -1;
     }
-    s_jsons.insert(std::make_pair<int, cJSON*>(type, json));
     return 0;
 }
 
-static cJSON* platform_get_json(int type)
+static cJSON* platform_get_json()
 {
-    std::map<int, cJSON*>::iterator itr = s_jsons.find(type);
-    if (itr == s_jsons.end()) {
-        return NULL;
-    }
-    return itr->second;
+    return s_json;
 }
 
 size_t write_callback(void *ptr, size_t size, size_t nmemb, void *userdata)
@@ -135,10 +121,7 @@ size_t write_callback(void *ptr, size_t size, size_t nmemb, void *userdata)
 
     if (ptr == NULL || realsize == 0) {
         plat_base_resp *resp = E_NEW plat_base_resp;
-
         resp->code = PLATFORM_RESPONSE_FAILED;
-        resp->plat_type = base_req->plat_type;
-        resp->resp = NULL;
         resp->cb = base_req->cb;
         resp->args = base_req->args;
 
@@ -150,191 +133,52 @@ size_t write_callback(void *ptr, size_t size, size_t nmemb, void *userdata)
     }
 
     if (base_req->push_resp(ptr, realsize)) {
-        switch (base_req->plat_type) {
-        case PLAT_PP:
-            platform_pp_on_auth(base_req);
-            break;
-        case PLAT_I4:
-            platform_i4_on_auth(base_req);
-            break;
-        }
+        platform_on_auth(base_req);
+        cJSON_Delete(base_req->resp);
         E_DELETE base_req;
     }
     return realsize;
 }
 
-static void platform_pp_on_auth(const plat_base_req *req)
+static void platform_on_auth(const plat_base_req *req)
 {
-    cJSON *state = cJSON_GetObjectItem(req->resp, "state");
-    cJSON *code = cJSON_GetObjectItem(state, "code");
-    cJSON *msg = cJSON_GetObjectItem(state, "msg");
+    cJSON *success = cJSON_GetObjectItem(req->resp, "success");
+    cJSON *info = cJSON_GetObjectItem(req->resp, "info");
 
-    LOG_INFO("platform", "pp onAuth(): code(%d), msg(%s)",
-            code->valueint, msg->valuestring);
+    cJSON *code = cJSON_GetObjectItem(info, "code");
+    cJSON *username = cJSON_GetObjectItem(info, "username");
+    cJSON *userid = cJSON_GetObjectItem(info, "userid");
+    cJSON *channel = cJSON_GetObjectItem(info, "channel");
+    cJSON *token = cJSON_GetObjectItem(info, "token");
 
-    int ret = PLATFORM_OK;
-    switch (code->valueint) {
-    case 1: // success
-        ret = PLATFORM_OK;
-        break;
-    case 10: // param invalid
-        ret = PLATFORM_PARAM_ERROR;
-        break;
-    case 11: // not loginin
-        ret = PLATFORM_USER_NOT_LOGININ;
-        break;
-    case 9: // timeout
-        ret = PLATFORM_RESPONSE_FAILED;
-        break;
-    default:
-        ret = PLATFORM_UNKOWN_ERROR;
-        break;
-    }
+    LOG_INFO("platform",
+            "onAuth(): success(%d), code(%d),\
+            username(%s), userid(%d), channel(%s), token(%s)",
+            success->valueint, code->valueint, username->valuestring,
+            channel->valuestring, token->valuestring);
 
     plat_base_resp *resp = E_NEW plat_base_resp;
-    resp->code = ret;
-    resp->plat_type = req->plat_type;
-    resp->resp = req->resp;
-    resp->cb = req->cb;
-    resp->args = req->args;
 
-    // push resp
-    s_resps.push(resp);
-}
-
-static void  platform_i4_on_auth(const plat_base_req *req)
-{
-    cJSON *status = cJSON_GetObjectItem(req->resp, "status");
-    cJSON *username = cJSON_GetObjectItem(req->resp, "username");
-    cJSON *userid = cJSON_GetObjectItem(req->resp, "userid");
-
-    LOG_INFO("platform", "i4 onAuth(): status(%d), username(%s), userid(%d)",
-            status->valueint, username->valuestring, userid->valueint);
-
-    int ret = PLATFORM_OK;
-    switch (status->valueint) {
-    case 0: // success
-        ret = PLATFORM_OK;
-        break;
-    case 1: // token invalid
-        ret = PLATFORM_PARAM_ERROR;
-        break;
-    case 2: // user not exist
-        ret = PLATFORM_USER_NOT_EXIEST;
-        break;
-    case 3: // timeout
-        ret = PLATFORM_RESPONSE_FAILED;
-        break;
-    default:
-        ret = PLATFORM_UNKOWN_ERROR;
-        break;
-    }
-
-    plat_base_resp *resp = E_NEW plat_base_resp;
-    resp->code = ret;
-    resp->plat_type = req->plat_type;
-    resp->resp = req->resp;
-    resp->cb = req->cb;
-    resp->args = req->args;
-
-    // push resp
-    s_resps.push(resp);
-
-}
-
-static int platform_pp_auth(const char *param, auth_cb cb, void *args)
-{
-    LOG_DEBUG("net", "platform_pp_auth: %p", args);
-
-
-    cJSON *json = cJSON_Parse(param);
-    if (json == NULL) {
-        return PLATFORM_PARAM_ERROR;
-    }
-
-    cJSON *setting = platform_get_json(PLAT_PP);
-    if (setting == NULL) {
-        return PLATFORM_SETTING_ERROR;
-    }
-    
-    cJSON *url = cJSON_GetObjectItem(setting, "URL");
-    if (url == NULL) {
-        return PLATFORM_SETTING_ERROR;
-    }
-
-    cJSON *appId = cJSON_GetObjectItem(setting, "AppId");
-    if (appId == NULL) {
-        return PLATFORM_SETTING_ERROR;
-    }
-
-    cJSON *appKey = cJSON_GetObjectItem(setting, "AppKey");
-    if (appKey == NULL) {
-        return PLATFORM_SETTING_ERROR;
-    }
-
-    cJSON *req_tpl = cJSON_GetObjectItem(setting, "AuthReq");
-    if (req_tpl == NULL) {
-        return PLATFORM_SETTING_ERROR;
-    }
-
-    // create request from template
-    cJSON *req = cJSON_Duplicate(req_tpl, 1);
-
-    // id
-    long now = time_s();
-    cJSON *id = cJSON_GetObjectItem(req, "id");
-    if (id == NULL) {
-        cJSON_AddNumberToObject(req, "id", now);
+    if (success->valueint == 1) {
+        resp->code = PLATFORM_OK;
     } else {
-        id->valueint = now;
-        cJSON_SetIntValue(id, now);
+        resp->code = PLATFORM_USER_NOT_LOGININ;
     }
+    resp->username = std::string(username->valuestring);
+    resp->userid = std::string(userid->valuestring);
+    resp->channel = std::string(channel->valuestring);
+    resp->token = std::string(token->valuestring);
+    resp->cb = req->cb;
+    resp->args = req->args;
 
-    // data/sid
-    cJSON *data = cJSON_GetObjectItem(req, "data");
-    cJSON *sid = cJSON_GetObjectItem(data, "sid");
-    sid->valuestring = strdup(cJSON_GetObjectItem(json, "token")->valuestring);
-
-    // game/appId
-    cJSON *game = cJSON_GetObjectItem(req, "game");
-    cJSON *gameId = cJSON_GetObjectItem(game, "gameId");
-    cJSON_SetIntValue(gameId, appId->valueint);
-
-    // sign data
-    std::string signtx;
-    signtx.append(sid->valuestring);
-    signtx.append(appKey->valuestring);
-    std::string md5sum = md5((unsigned char*)signtx.c_str(), signtx.length());
-    cJSON *sign = cJSON_GetObjectItem(req, "sign");
-    sign->valuestring = strdup(md5sum.c_str());
-
-    //char *encode = cJSON_PrintUnformatted(req);
-    char *encode = cJSON_Print(req);
-    std::string content = std::string(encode);
-    free(encode);
-    cJSON_Delete(req);
-    cJSON_Delete(json);
-
-    // do post request
-    plat_json_req *json_req = E_NEW plat_json_req(cb, args);
-    json_req->plat_type = PLAT_PP;
-
-    http_json(url->valuestring, content.c_str(), write_callback, json_req);
-
-    LOG_DEBUG("net", "url: %s, json: %s", url->valuestring, content.c_str());
-    return PLATFORM_OK;
+    // push resp
+    s_resps.push(resp);
 }
 
-static int platform_i4_auth(const char *param, auth_cb cb, void *args)
-{
+int platform_auth(const char *token, auth_cb cb, void *args) {
     LOG_DEBUG("net", "platform_i4_auth: %p", args);
 
-    cJSON *json = cJSON_Parse(param);
-    if (json == NULL) {
-        return PLATFORM_PARAM_ERROR;
-    }
-
-    cJSON *setting = platform_get_json(PLAT_I4);
+    cJSON *setting = platform_get_json();
     if (setting == NULL) {
         return PLATFORM_SETTING_ERROR;
     }
@@ -343,55 +187,19 @@ static int platform_i4_auth(const char *param, auth_cb cb, void *args)
     if (url == NULL) {
         return PLATFORM_SETTING_ERROR;
     }
+
     std::string post_url;
     post_url.append(url->valuestring);
-    post_url.append("?token=");
-    post_url.append(cJSON_GetObjectItem(json, "token")->valuestring);
-
-    cJSON *req_tpl = cJSON_GetObjectItem(setting, "AuthReq");
-    if (req_tpl == NULL) {
-        return PLATFORM_SETTING_ERROR;
-    }
-
-    // create request from template
-    cJSON *req = cJSON_Duplicate(req_tpl, 1);
-
-    // token
-    std::string token = cJSON_GetObjectItem(json, "token")->valuestring;
-    cJSON *req_token = cJSON_GetObjectItem(req, "token");
-    if (req_token == NULL) {
-        cJSON_AddStringToObject(req, "token", token.c_str());
-    }
-    req_token->valuestring = strdup(token.c_str());
-
-    char *encode = cJSON_Print(req);
-    std::string content = std::string(encode);
-    free(encode);
-    cJSON_Delete(req);
-    cJSON_Delete(json);
+    post_url.append("/");
+    post_url.append(token);
 
     // do post request
     plat_json_req *json_req = E_NEW plat_json_req(cb, args);
     json_req->plat_type = PLAT_I4;
 
-    http_json(post_url.c_str(), content.c_str(), write_callback, json_req);
+    http_json(post_url.c_str(), "", write_callback, json_req);
 
-    LOG_DEBUG("net", "url: %s, json: %s", url->valuestring, content.c_str());
-    return PLATFORM_OK;
-}
-
-
-int platform_auth(int plat_type, const char *data,
-        auth_cb cb, void *args) {
-    switch (plat_type) {
-    case PLAT_PP:
-        return platform_pp_auth(data, cb, args);
-    case PLAT_I4:
-        return platform_i4_auth(data, cb, args);
-    default:
-        return PLATFORM_TYPE_ERROR;
-        break;
-    }
+    LOG_DEBUG("net", "auth url: %s", url->valuestring);
     return PLATFORM_OK;
 }
 
@@ -403,11 +211,8 @@ int platform_proc() {
     for (itr = resps.begin();itr != resps.end(); ++itr) {
         plat_base_resp *resp = *itr;
         if (resp->cb != NULL) {
-            resp->cb(resp->plat_type, resp->code, resp->resp, resp->args);
-        }
-
-        if (resp->resp != NULL) {
-            cJSON_Delete(resp->resp);
+            resp->cb(resp->code, resp->userid, resp->username,
+                    resp->channel, resp->token, resp->args);
         }
         E_DELETE resp;
     }
