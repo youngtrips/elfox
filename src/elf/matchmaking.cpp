@@ -136,6 +136,10 @@ namespace elf {
         return ent;
     }
 
+    MatchEntity *MatchPool::get_buddy(int size) {
+        return NULL;
+    }
+
     /// find skill proper opponent
     MatchEntity *MatchPool::get_opponent(MatchEntity *ent) {
         int lvl = get_rank_level(ent->elo);
@@ -193,7 +197,7 @@ namespace elf {
             size += buddy->get_size();
             return true;
         }
-        return false;
+        return true;
     }
 
     /// pop matched team(s)
